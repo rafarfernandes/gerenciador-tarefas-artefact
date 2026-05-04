@@ -1,20 +1,21 @@
 /**
- * Componente que renderiza a lista de tarefas com exclusão.
+ * Lista de tarefas com infinite scroll e exclusão.
  *
- * Recebe os dados iniciais via props (vindos do SSR) e os usa
- * como initialData do React Query. Isso faz com que:
- * - O usuário veja a lista imediatamente (SSR já trouxe os dados)
- * - Após mutações (excluir), o cache é invalidado e a lista
- *   se atualiza sozinha sem reload de página
+ * Usa useInfiniteQuery do tRPC + IntersectionObserver pra carregar
+ * mais tarefas conforme o usuário rola a página. O backend retorna
+ * o cursor da próxima página, e o React Query gerencia a paginação.
+ *
+ * Os dados iniciais (primeira página) vêm do SSR via props,
+ * evitando a primeira chamada de rede.
  */
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { CheckCircle2, AlertCircle, Pencil, Trash2, Inbox } from "lucide-react";
 import { trpc } from "@/trpc/client";
 
-// Tipo dos dados que vêm do SSR (definido pra ficar explícito).
 type TarefaInicial = {
   id: string;
   titulo: string;
@@ -28,43 +29,66 @@ type Props = {
 };
 
 export function ListaTarefas({ initialItens, initialCursor }: Props) {
-  // Estado de feedback ao usuário (mensagem de sucesso/erro temporária).
   const [feedback, setFeedback] = useState<{
     tipo: "sucesso" | "erro";
     mensagem: string;
   } | null>(null);
 
-  // Estado pra saber qual tarefa está sendo deletada (controla loading
-  // por linha em vez de globalmente — UX mais correta com múltiplos botões).
   const [idDeletando, setIdDeletando] = useState<string | null>(null);
 
-  // utils permite invalidar queries do tRPC manualmente (refetch).
+  // Sentinela do IntersectionObserver — quando entra na viewport, carrega mais.
+  // Tipo HTMLLIElement porque a sentinela é um <li> (filho semanticamente
+  // correto de um <ul>).
+  const sentinelaRef = useRef<HTMLLIElement | null>(null);
+
   const utils = trpc.useUtils();
 
-  // useQuery com initialData = "começa com os dados do SSR"; o React Query
-  // não vai disparar refetch desnecessário porque já tem o dado.
-  const { data } = trpc.tarefa.listar.useQuery(
+  // useInfiniteQuery: gerencia páginas automaticamente.
+  // initialData precisa ter o formato { pages, pageParams } pro infinite query.
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = trpc.tarefa.listar.useInfiniteQuery(
     { limit: 10 },
     {
+      getNextPageParam: (ultima) => ultima.proximoCursor ?? undefined,
       initialData: {
-        itens: initialItens,
-        proximoCursor: initialCursor,
+        pages: [{ itens: initialItens, proximoCursor: initialCursor }],
+        pageParams: [undefined],
       },
     },
   );
 
-  // Mutation de exclusão. onMutate dispara ANTES da request — boa pra
-  // marcar o id que está sendo deletado e bloquear o botão.
+  // Achata todas as páginas num array único pra renderizar.
+  const itens = data?.pages.flatMap((p) => p.itens) ?? [];
+
+  // IntersectionObserver: dispara fetchNextPage quando a sentinela
+  // entra na viewport (com 200px de margem antecipada pra ficar suave).
+  useEffect(() => {
+    const elemento = sentinelaRef.current;
+    if (!elemento || !hasNextPage) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+
+    observer.observe(elemento);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   const deletar = trpc.tarefa.deletar.useMutation({
-    onMutate: ({ id }) => {
-      setIdDeletando(id);
-    },
+    onMutate: ({ id }) => setIdDeletando(id),
     onSuccess: () => {
-      // Invalida a query da lista — força um refetch e atualiza a UI.
       utils.tarefa.listar.invalidate();
       setFeedback({ tipo: "sucesso", mensagem: "Tarefa excluída com sucesso." });
       setIdDeletando(null);
-      // Esconde a mensagem após 3s.
       setTimeout(() => setFeedback(null), 3000);
     },
     onError: (erro) => {
@@ -78,41 +102,49 @@ export function ListaTarefas({ initialItens, initialCursor }: Props) {
   });
 
   const handleExcluir = (id: string, titulo: string) => {
-    // Confirmação simples — em produção usaríamos um modal customizado,
-    // mas window.confirm atende o requisito sem complicar.
-    const confirmou = window.confirm(`Excluir a tarefa "${titulo}"?`);
-    if (confirmou) {
+    if (window.confirm(`Excluir a tarefa "${titulo}"?`)) {
       deletar.mutate({ id });
     }
   };
 
-  const itens = data?.itens ?? [];
-
   return (
     <div className="space-y-4">
-      {/* Mensagem de feedback (sucesso ou erro) */}
+      {/* Toast de feedback */}
       {feedback && (
         <div
           role="alert"
           className={
             feedback.tipo === "sucesso"
-              ? "rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-800"
-              : "rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800"
+              ? "flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+              : "flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
           }
         >
-          {feedback.mensagem}
+          {feedback.tipo === "sucesso" ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+          ) : (
+            <AlertCircle className="h-4 w-4 shrink-0" />
+          )}
+          <span>{feedback.mensagem}</span>
         </div>
       )}
 
       {/* Estado vazio */}
       {itens.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center">
-          <p className="text-gray-600">Nenhuma tarefa por aqui ainda.</p>
+        <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-white px-6 py-16 text-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
+            <Inbox className="h-6 w-6 text-slate-400" />
+          </div>
+          <h3 className="text-base font-medium text-slate-900">
+            Nenhuma tarefa por aqui
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Comece criando sua primeira tarefa.
+          </p>
           <Link
             href="/tarefa/nova"
-            className="mt-3 inline-block text-sm font-medium text-blue-600 hover:underline"
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
           >
-            Criar a primeira tarefa →
+            Criar tarefa
           </Link>
         </div>
       ) : (
@@ -120,19 +152,19 @@ export function ListaTarefas({ initialItens, initialCursor }: Props) {
           {itens.map((tarefa) => (
             <li
               key={tarefa.id}
-              className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+              className="group rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:border-slate-300 hover:shadow-md"
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
-                  <h3 className="font-semibold text-gray-900">
+                  <h3 className="font-semibold text-slate-900">
                     {tarefa.titulo}
                   </h3>
                   {tarefa.descricao && (
-                    <p className="mt-1 text-sm text-gray-600">
+                    <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
                       {tarefa.descricao}
                     </p>
                   )}
-                  <p className="mt-2 text-xs text-gray-400">
+                  <p className="mt-3 text-xs text-slate-400">
                     Criada em{" "}
                     {new Date(tarefa.dataCriacao).toLocaleString("pt-BR", {
                       dateStyle: "short",
@@ -141,25 +173,37 @@ export function ListaTarefas({ initialItens, initialCursor }: Props) {
                   </p>
                 </div>
 
-                <div className="flex shrink-0 gap-2">
+                <div className="flex shrink-0 gap-1.5">
                   <Link
                     href={`/tarefa/${tarefa.id}/editar`}
-                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    aria-label="Editar tarefa"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
                   >
-                    Editar
+                    <Pencil className="h-4 w-4" />
                   </Link>
                   <button
                     type="button"
                     onClick={() => handleExcluir(tarefa.id, tarefa.titulo)}
                     disabled={idDeletando === tarefa.id}
-                    className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label="Excluir tarefa"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {idDeletando === tarefa.id ? "Excluindo..." : "Excluir"}
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
               </div>
             </li>
           ))}
+
+          {/* Sentinela do infinite scroll + indicador de carregamento */}
+          {hasNextPage && (
+            <li
+              ref={sentinelaRef}
+              className="flex items-center justify-center py-6 text-sm text-slate-400"
+            >
+              {isFetchingNextPage ? "Carregando mais tarefas..." : ""}
+            </li>
+          )}
         </ul>
       )}
     </div>
