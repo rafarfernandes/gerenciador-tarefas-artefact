@@ -36,19 +36,22 @@ Sistema simples de gerenciamento de tarefas construído com **Next.js 15**, **tR
 ### Passos
 
 1. Clone o repositório:
+
 ```bash
-   git clone https://github.com/SEU_USUARIO/gerenciador-tarefas-artefact.git
-   cd gerenciador-tarefas-artefact
+git clone https://github.com/rafarfernandes/gerenciador-tarefas-artefact.git
+cd gerenciador-tarefas-artefact
 ```
 
 2. Instale as dependências:
+
 ```bash
-   npm install
+npm install
 ```
 
 3. Rode em modo de desenvolvimento:
+
 ```bash
-   npm run dev
+npm run dev
 ```
 
 4. Abra [http://localhost:3000](http://localhost:3000) (ou a porta indicada no terminal).
@@ -57,6 +60,7 @@ Sistema simples de gerenciamento de tarefas construído com **Next.js 15**, **tR
 
 ## 📁 Estrutura do projeto
 
+```
 src/
 ├── app/
 │   ├── _components/             # Componentes específicos da UI
@@ -77,8 +81,9 @@ src/
 │   │   └── trpc.ts              # Inicialização do tRPC
 │   └── db.ts                    # Store em memória (Map)
 └── trpc/
-├── client.ts                # Cliente React do tRPC (hooks tipados)
-└── server.ts                # Caller server-side (para SSR sem HTTP)
+    ├── client.ts                # Cliente React do tRPC (hooks tipados)
+    └── server.ts                # Caller server-side (para SSR sem HTTP)
+```
 
 ## 🧠 Decisões técnicas
 
@@ -121,4 +126,3 @@ Como este é um teste técnico sem autenticação, todas as procedures são `pub
 | `npm run dev` | Inicia o servidor de desenvolvimento |
 | `npm run build` | Build de produção |
 | `npm run start` | Inicia o servidor em modo produção (após build) |
-| `npm run lint` | Roda o ESLint |
